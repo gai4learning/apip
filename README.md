@@ -188,12 +188,16 @@ Please be aware of the following regarding AI-generated content:
    - `gpt-4o`: Complex reasoning, detailed explanations, and longer contexts
    - `o1-mini`: Latest model with improved efficiency and quality
 
-2. **Image Generation**:
-   - `dall-e-3`: Create detailed images from text descriptions
-     - Photorealistic images
-     - Artistic illustrations
-     - Technical diagrams
-     - Educational visuals
+2. **Image Generation** (EUS2 endpoint):
+   Two approaches — same API key works for both:
+
+   **Direct (`images/generations` endpoint)**:
+   - `gpt-image-1.5`: High-quality image generation
+   - `gpt-image-1-mini`: Faster, lighter image generation
+
+   **Responses API (GPT orchestrated)**:
+   - `gpt-4o` + `gpt-image-1.5`: GPT-4o decides when to generate an image
+   - `gpt-4o` + `gpt-image-1-mini`: Same but with the mini image model
 
 3. **Embedding Models**:
    - `text-embedding-ada-002`: Legacy model for:

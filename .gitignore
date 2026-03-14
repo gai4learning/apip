@@ -23,4 +23,12 @@ Thumbs.db
 # Logs
 logs/
 *.log
-api_tester_*.log 
+api_tester_*.log
+
+# Generated files
+generated_image.png
+images/
+*.zip
+
+# Test cache
+.pytest_cache/

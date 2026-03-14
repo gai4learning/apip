@@ -1,6 +1,7 @@
 import streamlit as st
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 import os
+import base64
 from dotenv import load_dotenv
 import logging
 import datetime
@@ -91,10 +92,14 @@ load_dotenv()
 # Security Settings
 MAX_LOG_SIZE = 1024 * 1024  # 1MB
 MAX_PROMPT_LENGTH = 4000
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # Constants - matching the notebook exactly
 AZURE_ENDPOINT = "https://cuhk-apip.azure-api.net"
+# EUS2 OpenAI-compatible endpoint (used for responses API and chat)
+EUS2_BASE_URL = "https://cuhk-apip.azure-api.net/openai-eus2/openai/v1"
+# EUS2 direct image generation endpoints (cognitiveservices-style, via APIM)
+EUS2_IMAGE_BASE_URL = "https://cuhk-apip.azure-api.net/openai-eus2/openai/v1/images/generations"
+
 MODELS = {
     "gpt-4o-mini": {
         "type": "chat",
@@ -106,12 +111,30 @@ MODELS = {
     },
     "o1-mini": {
         "type": "chat",
-        "description": "Latest model optimized for efficiency and improved responses"
+        "description": "Latest model optimized for efficiency and improved responses",
+        "api_version": "2024-12-01-preview"
     },
-    "dall-e-3": {
-        "type": "image",
-        "description": "Create high-quality images from text descriptions",
-        "api_version": "2024-02-01"  # DALL-E 3 requires this specific API version
+    "gpt-image-1.5 (direct)": {
+        "type": "image_direct",
+        "deployment": "gpt-image-1.5",
+        "description": "Latest image model — direct generation via images/generations endpoint"
+    },
+    "gpt-image-1-mini (direct)": {
+        "type": "image_direct",
+        "deployment": "gpt-image-1-mini",
+        "description": "Faster, lighter image model — direct generation via images/generations endpoint"
+    },
+    "gpt-4o + gpt-image-1.5 (Responses API)": {
+        "type": "image_responses",
+        "orchestrator": "gpt-4o",
+        "image_deployment": "gpt-image-1.5",
+        "description": "gpt-4o orchestrates image generation using gpt-image-1.5 via Responses API"
+    },
+    "gpt-4o + gpt-image-1-mini (Responses API)": {
+        "type": "image_responses",
+        "orchestrator": "gpt-4o",
+        "image_deployment": "gpt-image-1-mini",
+        "description": "gpt-4o orchestrates image generation using gpt-image-1-mini via Responses API"
     },
     "text-embedding-ada-002": {
         "type": "embedding",
@@ -167,6 +190,17 @@ def rotate_logs():
         backup = log_file.with_suffix('.log.1')
         if log_file.exists():
             log_file.rename(backup)
+
+def make_eus2_client(api_key, extra_headers=None):
+    """Build an OpenAI-compatible client pointing at the EUS2 endpoint."""
+    headers = {"api-key": api_key}
+    if extra_headers:
+        headers.update(extra_headers)
+    return OpenAI(
+        base_url=EUS2_BASE_URL,
+        api_key=api_key,
+        default_headers=headers,
+    )
 
 # Page config with security headers
 st.set_page_config(
@@ -250,14 +284,23 @@ with st.sidebar:
     if st.session_state.show_code:
         with st.expander("1. Basic Setup", expanded=False):
             st.code('''
-from openai import AzureOpenAI
+from openai import AzureOpenAI, OpenAI
 
-# Initialize the client
-client = AzureOpenAI(
+# For chat and embedding models (EUS1 — Azure-style endpoint)
+azure_client = AzureOpenAI(
     azure_endpoint="https://cuhk-apip.azure-api.net",
-    api_version="2024-02-01",  # Use appropriate version for your model
+    api_version="2023-05-15",
     api_key="your_api_key_here"
-)''', language='python')
+)
+
+# For image generation models (EUS2 — OpenAI-compatible endpoint)
+eus2_client = OpenAI(
+    base_url="https://cuhk-apip.azure-api.net/openai-eus2/openai/v1",
+    api_key="your_api_key_here",
+    default_headers={"api-key": "your_api_key_here"},
+)
+# Same API key works for both!
+''', language='python')
             
         with st.expander("2. Chat Models (gpt-4o-mini/gpt-4o/o1-mini)", expanded=False):
             st.code('''
@@ -282,31 +325,69 @@ response = client.chat.completions.create(
 )
 print(response.choices[0].message.content)''', language='python')
 
-        with st.expander("3. Image Generation (dall-e-3)", expanded=False):
+        with st.expander("3. Image Generation — Direct (gpt-image-1.5 / gpt-image-1-mini)", expanded=False):
             st.code('''
-# Generate an image with DALL-E 3
-response = client.images.generate(
-    model="dall-e-3",
-    prompt="A beautiful sunset view of CUHK campus",
-    n=1,
-    size="1024x1024",  # Options: 1024x1024, 1024x1792, 1792x1024
-    quality="standard",  # "standard" or "hd"
-    style="natural"     # "natural" or "vivid"
+import httpx, base64
+
+# Direct call to gpt-image model via images/generations
+# Use /images/generations/standard for gpt-image-1.5
+# Use /images/generations/mini    for gpt-image-1-mini
+response = httpx.post(
+    "https://cuhk-apip.azure-api.net/openai-eus2/openai/v1/images/generations/standard",
+    headers={"api-key": "your_api_key_here", "Content-Type": "application/json"},
+    json={
+        "prompt": "A beautiful sunset view of CUHK campus",
+        "n": 1,
+        "size": "1024x1024",
+        "quality": "medium",   # "low", "medium", "high"
+        "output_format": "png",
+    },
+    timeout=120,
+)
+response.raise_for_status()
+
+# Decode and save the image
+img_bytes = base64.b64decode(response.json()["data"][0]["b64_json"])
+with open("generated_image.png", "wb") as f:
+    f.write(img_bytes)
+print("Image saved!")
+''', language='python')
+
+        with st.expander("4. Image Generation — Responses API (GPT orchestrated)", expanded=False):
+            st.code('''
+from openai import OpenAI
+import base64
+
+# Use OpenAI client with EUS2 base URL
+# Pass the image deployment name in a header so the backend knows which model to use
+client = OpenAI(
+    base_url="https://cuhk-apip.azure-api.net/openai-eus2/openai/v1",
+    api_key="your_api_key_here",
+    default_headers={
+        "api-key": "your_api_key_here",
+        "x-ms-oai-image-generation-deployment": "gpt-image-1.5",  # or gpt-image-1-mini
+    },
 )
 
-# Get the image URL
-image_url = response.data[0].url
+# GPT-4o acts as orchestrator — it decides when to call the image generation tool
+response = client.responses.create(
+    model="gpt-4o",
+    input="A futuristic smart city at dusk with glowing skyscrapers and flying vehicles.",
+    tools=[{"type": "image_generation"}],
+)
 
-# If you want to save the image:
-import requests
-from PIL import Image
-from io import BytesIO
-
-response = requests.get(image_url)
-image = Image.open(BytesIO(response.content))
-image.save("generated_image.png")''', language='python')
+# Extract the image from the output blocks
+for item in response.output:
+    if item.type == "image_generation_call":
+        img_bytes = base64.b64decode(item.result)
+        with open("generated_image.png", "wb") as f:
+            f.write(img_bytes)
+        print("Image saved!")
+        print("Revised prompt:", item.revised_prompt)
+        break
+''', language='python')
             
-        with st.expander("4. Text Embeddings", expanded=False):
+        with st.expander("5. Text Embeddings", expanded=False):
             st.code('''
 # Get embedding using latest model
 response = client.embeddings.create(
@@ -328,7 +409,7 @@ def get_similarity(text1, text2, model="text-embedding-3-small"):
     emb2 = response.data[1].embedding
     return 1 - cosine(emb1, emb2)  # Cosine similarity''', language='python')
             
-        with st.expander("5. Error Handling", expanded=False):
+        with st.expander("6. Error Handling", expanded=False):
             st.code('''
 try:
     response = client.chat.completions.create(
@@ -360,10 +441,16 @@ except Exception as e:
             - `o1-mini`: Latest model optimized for efficiency and improved responses
 
             #### Image Generation
-            - `dall-e-3`: Create high-quality images from text descriptions
-              - Sizes: 1024x1024, 1024x1792, 1792x1024
-              - Quality: standard, hd
-              - Style: natural, vivid
+            Two approaches — same API key works for both:
+
+            **Direct (`images/generations`)**
+            - `gpt-image-1.5`: High-quality image generation
+            - `gpt-image-1-mini`: Faster, lighter image generation
+
+            **Responses API (GPT orchestrated)**
+            - `gpt-4o` + `gpt-image-1.5`: GPT-4o decides when to generate an image
+            - `gpt-4o` + `gpt-image-1-mini`: Same but with the mini image model
+            - Useful when you want the model to reason about the prompt before generating
 
             #### Embedding Models
             - `text-embedding-ada-002`: Legacy embedding model (1536 dimensions)
@@ -434,7 +521,7 @@ def process_student_grades(grades):
 
     # Test cases for image generation
     image_test_cases = {
-        "Campus Scene": "A photorealistic image of CUHK campus with the Goddess of Democracy statue in the foreground and modern academic buildings in the background, during a sunny day.",
+        "Campus Scene": "A photorealistic image of CUHK campus in the foreground and modern academic buildings in the background, during a sunny day.",
         "Technical Diagram": "A clear technical diagram explaining how neural networks process information, with labeled nodes and connections, suitable for an academic presentation.",
         "Educational Visual": "An informative illustration showing the concept of machine learning, with a computer analyzing different types of data represented by colorful icons and arrows."
     }
@@ -463,21 +550,26 @@ def process_student_grades(grades):
         if api_key:
             try:
                 logger.info("Attempting to initialize Azure OpenAI client")
-                # Use model-specific API version if available
-                api_version = MODELS[selected_model].get("api_version", API_VERSION)
-                client = AzureOpenAI(
-                    azure_endpoint=AZURE_ENDPOINT,
-                    api_version=api_version,
-                    api_key=api_key
-                )
-                logger.info("Azure OpenAI client initialized successfully")
+                model_type = MODELS[selected_model]["type"]
+                if model_type in ("image_direct", "image_responses"):
+                    # EUS2 uses a plain OpenAI-compatible client
+                    client = make_eus2_client(api_key)
+                else:
+                    # EUS1 / legacy models use AzureOpenAI
+                    api_version = MODELS[selected_model].get("api_version", API_VERSION)
+                    client = AzureOpenAI(
+                        azure_endpoint=AZURE_ENDPOINT,
+                        api_version=api_version,
+                        api_key=api_key
+                    )
+                logger.info("Client initialized successfully")
                 st.success("API key accepted! You can now test the API.")
             except Exception as e:
                 logger.error(f"Error initializing client: {str(e)}")
                 st.error(f"Error initializing client: {str(e)}")
                 st.info("""
                 Please check:
-                1. Your API key is correct (it should be in the format like '867bad37dee74bd69076e99dfcbe0596')
+                1. Your API key is correct (32 hex characters, e.g. 'abcd1234abcd1234abcd1234abcd1234')
                 2. You have access to the CUHK Azure OpenAI service
                 3. The API endpoint is accessible from your network
                 """)
@@ -494,7 +586,7 @@ def process_student_grades(grades):
             if custom_prompt:
                 custom_prompt = sanitize_prompt(custom_prompt)
         
-        elif model_type == "image":
+        elif model_type in ("image_direct", "image_responses"):
             # Test case selection for image generation
             selected_test = st.selectbox("Select a test case", list(image_test_cases.keys()))
             
@@ -508,26 +600,10 @@ def process_student_grades(grades):
             if custom_prompt:
                 custom_prompt = sanitize_prompt(custom_prompt)
             
-            # Image size selection
-            size = st.selectbox(
-                "Select image size",
-                ["1024x1024", "1024x1792", "1792x1024"],
-                help="Choose the dimensions of your generated image"
-            )
-            
-            # Quality selection
-            quality = st.selectbox(
-                "Select image quality",
-                ["standard", "hd"],
-                help="HD quality provides more detail but uses more credits"
-            )
-            
-            # Style selection
-            style = st.selectbox(
-                "Select image style",
-                ["natural", "vivid"],
-                help="Natural for photorealistic images, vivid for more artistic ones"
-            )
+            if model_type == "image_direct":
+                st.caption("Calls the image model directly via `images/generations` endpoint.")
+            else:
+                st.caption("Uses `responses.create` — a GPT model orchestrates the image generation tool.")
         
         else:  # embedding models
             # Test case selection for embedding model
@@ -559,16 +635,15 @@ def process_student_grades(grades):
         - GPT-4o: Complex tasks
         - o1-mini: Latest & efficient
         
-        **Image Generation**:
-        - DALL-E 3: Create detailed images
-        - Use clear descriptions
-        - Specify style and content
+        **Image Generation (2 approaches)**:
+        - Direct (`images.generate`): call gpt-image-1.5 or gpt-image-1-mini directly
+        - Responses API: GPT-4o orchestrates the image tool — supports richer prompting
         
         **Embeddings**:
         - text-embedding-ada-002: Legacy
         - text-embedding-3-small: Latest
         
-        Check the sidebar for examples!
+        Check the sidebar for code examples!
         """)
 
     # Helper function to convert usage to dict
@@ -614,7 +689,7 @@ def process_student_grades(grades):
                                     {"role": "system", "content": "You are a helpful assistant."},
                                     {"role": "user", "content": custom_prompt}
                                 ]
-                            logger.info(f"Custom prompt submitted: {custom_prompt[:50]}...")
+                            logger.info(f"Custom prompt submitted ({len(custom_prompt)} chars)")
                         else:
                             # For o1-mini, use only the user messages from test cases
                             if selected_model == "o1-mini":
@@ -646,38 +721,72 @@ def process_student_grades(grades):
                                 st.json(usage_dict)
                                 st.metric("Response Time", f"{duration:.2f}s")
                     
-                    elif model_type == "image":
+                    elif model_type == "image_direct":
+                        # Direct call to gpt-image model via images/generations
                         prompt = custom_prompt if custom_prompt else image_test_cases[selected_test]
-                        
-                        # Get the correct model configuration
-                        model_config = MODELS[selected_model]
-                        deployment_name = model_config.get("deployment_name", selected_model)
-                        
-                        response = client.images.generate(
-                            model=deployment_name,  # Use the deployment name for the API call
-                            prompt=prompt,
-                            n=1,
-                            size=size,
-                            quality=quality,
-                            style=style
+                        deployment = MODELS[selected_model]["deployment"]
+                        # Route to the correct APIM operation based on deployment
+                        path_suffix = "standard" if deployment == "gpt-image-1.5" else "mini"
+                        direct_client = OpenAI(
+                            base_url=f"{EUS2_BASE_URL}/images/generations/{path_suffix}",
+                            api_key=api_key,
+                            default_headers={"api-key": api_key},
                         )
-                        
+                        # Use httpx directly since OpenAI SDK images.generate
+                        # doesn't support custom base_url path suffixes cleanly
+                        import httpx
+                        resp = httpx.post(
+                            f"{EUS2_BASE_URL}/images/generations/{path_suffix}",
+                            headers={"api-key": api_key, "Content-Type": "application/json"},
+                            json={"prompt": prompt, "n": 1, "size": "1024x1024", "quality": "medium", "output_format": "png"},
+                            timeout=120,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
                         end_time = datetime.datetime.now()
                         duration = (end_time - start_time).total_seconds()
-                        
-                        # Display the generated image
+                        b64 = data["data"][0]["b64_json"]
+                        img_bytes = base64.b64decode(b64)
                         with st.container():
                             st.subheader("Generated Image")
-                            st.image(response.data[0].url, caption=prompt)
-                            
-                            # Display generation details
+                            st.image(img_bytes, caption=prompt)
                             with st.expander("Generation Details"):
-                                st.json({
-                                    "size": size,
-                                    "quality": quality,
-                                    "style": style,
-                                    "duration": f"{duration:.2f}s"
-                                })
+                                st.json({"model": deployment, "endpoint": f"images/generations/{path_suffix}", "size": "1024x1024", "quality": "medium", "duration": f"{duration:.2f}s"})
+
+                    elif model_type == "image_responses":
+                        # GPT model orchestrates image generation via Responses API
+                        prompt = custom_prompt if custom_prompt else image_test_cases[selected_test]
+                        orchestrator = MODELS[selected_model]["orchestrator"]
+                        image_deployment = MODELS[selected_model]["image_deployment"]
+                        eus2_client = make_eus2_client(
+                            api_key,
+                            {"x-ms-oai-image-generation-deployment": image_deployment}
+                        )
+                        response = eus2_client.responses.create(
+                            model=orchestrator,
+                            input=prompt,
+                            tools=[{"type": "image_generation"}],
+                        )
+                        end_time = datetime.datetime.now()
+                        duration = (end_time - start_time).total_seconds()
+                        # Extract image from output blocks
+                        img_shown = False
+                        for item in (response.output or []):
+                            if getattr(item, "type", None) == "image_generation_call":
+                                b64 = getattr(item, "result", None)
+                                if b64:
+                                    img_bytes = base64.b64decode(b64)
+                                    with st.container():
+                                        st.subheader("Generated Image")
+                                        st.image(img_bytes, caption=prompt)
+                                        revised = getattr(item, "revised_prompt", None)
+                                        if revised:
+                                            st.caption(f"Revised prompt: {revised}")
+                                        with st.expander("Generation Details"):
+                                            st.json({"orchestrator": orchestrator, "image_model": image_deployment, "endpoint": "responses", "duration": f"{duration:.2f}s"})
+                                    img_shown = True
+                        if not img_shown:
+                            st.warning("No image returned — model responded with text only.")
                     
                     else:  # embedding models
                         if isinstance(custom_prompt, list):
@@ -772,4 +881,4 @@ def process_student_grades(grades):
         <p>Made with ❤️ for CUHK Students</p>
         <p>For more information, visit the <a href='https://cuhk-apip.developer.azure-api.net/'>CUHK Azure OpenAI API Documentation</a></p>
     </div>
-    """, unsafe_allow_html=True) 
+    """, unsafe_allow_html=True)  # Safe: HTML is static, no user input
