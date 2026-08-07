@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +30,7 @@ from services.embedding_service import (
 from services.image_service import ImageResult, ImageService
 from utils.errors import APIMError, sanitized_unexpected_error
 from utils.security import configure_local_logging, mask_api_key
+from utils.session import append_bounded_record, bounded_chat_history
 from utils.usage import HeaderSummary, safe_session_export
 
 SMOKE_TEST_PROMPT = "Reply exactly with: CUHK APIM test successful."
@@ -46,6 +48,20 @@ PAGES = (
     "Special Access",
     "About / Safety",
 )
+
+
+def require_loopback_server(address: str | None) -> None:
+    normalized = (address or "").strip().lower()
+    if normalized == "localhost":
+        return
+    try:
+        if ipaddress.ip_address(normalized).is_loopback:
+            return
+    except ValueError:
+        pass
+    raise ValueError(
+        "Streamlit must bind to a loopback address for this local-only learning tool."
+    )
 
 
 def _region_select(label: str, default: Region, key: str) -> Region:
@@ -136,7 +152,7 @@ def _record(stats: dict[str, Any]) -> None:
     records = st.session_state.setdefault("usage_records", [])
     safe = dict(stats)
     safe["timestamp_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
-    records.append(safe)
+    append_bounded_record(records, safe)
 
 
 def _chat_record(result: ChatResult) -> None:
@@ -156,10 +172,15 @@ def _chat_record(result: ChatResult) -> None:
     )
 
 
+def _render_untrusted_text(content: str) -> None:
+    """Render model-controlled text without Markdown or HTML interpretation."""
+    st.text(content)
+
+
 def _render_chat_result(result: ChatResult) -> None:
     st.subheader("Sanitized response")
     if result.text:
-        st.write(result.text)
+        _render_untrusted_text(result.text)
     if result.empty_output_guidance:
         st.warning(result.empty_output_guidance)
     columns = st.columns(5)
@@ -211,6 +232,7 @@ def show_chat(settings: Settings, api_key: str, logger: Any) -> None:
         submitted = st.form_submit_button("Send chat request", type="primary")
     if submitted:
         try:
+            history = bounded_chat_history(st.session_state.get("chat_history", []))
             result = ChatService(_client(settings, region, api_key, logger)).complete(
                 region=region,
                 model_id=selected_id,
@@ -218,13 +240,14 @@ def show_chat(settings: Settings, api_key: str, logger: Any) -> None:
                 user_prompt=user_prompt,
                 max_completion_tokens=int(max_completion_tokens),
                 temperature=temperature,
-                conversation=st.session_state.get("chat_history", []),
+                conversation=history,
             )
-            st.session_state.setdefault("chat_history", []).extend(
-                [
+            st.session_state["chat_history"] = bounded_chat_history(
+                history,
+                (
                     {"role": "user", "content": user_prompt.strip()},
                     {"role": "assistant", "content": result.text},
-                ]
+                ),
             )
             st.session_state["last_chat_result"] = result
             _chat_record(result)
@@ -243,7 +266,7 @@ def show_chat(settings: Settings, api_key: str, logger: Any) -> None:
         with st.expander("Conversation in this local session"):
             for item in history:
                 st.write(f"**{item['role'].title()}:**")
-                st.write(item["content"])
+                _render_untrusted_text(item["content"])
 
 
 def show_model_router(settings: Settings, api_key: str, logger: Any) -> None:
@@ -304,6 +327,9 @@ def show_model_router(settings: Settings, api_key: str, logger: Any) -> None:
 def show_images(settings: Settings, api_key: str, logger: Any) -> None:
     st.title("Image Generation")
     st.caption("Images are decoded in memory, validated, displayed, and never written to logs.")
+    if st.button("Clear generated image"):
+        st.session_state.pop("last_image_result", None)
+        st.rerun()
     region = _region_select("Region", settings.default_image_region, "image_region")
     choices = image_models(region)
     ids = [model.model_id for model in choices]
@@ -512,6 +538,9 @@ def show_usage_limits() -> None:
     records = st.session_state.get("usage_records", [])
     st.subheader("Application-side session statistics")
     st.caption("Local session metadata only; it is distinct from CUHK APIM allowance and backend capacity.")
+    if st.button("Clear session statistics"):
+        st.session_state.pop("usage_records", None)
+        st.rerun()
     export = safe_session_export(records)
     if records:
         st.dataframe(export["records"], hide_index=True)
@@ -598,11 +627,17 @@ def main() -> None:
     global st
     import streamlit as st
     from dotenv import load_dotenv
+    from streamlit import config as streamlit_config
 
     from get_started import show_get_started
 
     load_dotenv()
     st.set_page_config(page_title="CUHK Foundry API Learning Tool", layout="wide")
+    try:
+        require_loopback_server(streamlit_config.get_option("server.address"))
+    except ValueError as error:
+        st.error(str(error))
+        st.stop()
     st.error("LOCAL-ONLY: run inside your Codespace. Do not publish or expose this Streamlit app.")
     try:
         settings = load_settings()

@@ -9,7 +9,12 @@ from typing import Any
 from clients.cuhk_apim_client import APIMResponse, CUHKAPIMClient
 from config.model_catalog import Operation, Region, require_model_operation
 from utils.errors import ResponseFormatError
-from utils.usage import HeaderSummary, normalize_usage
+from utils.session import MAX_CHAT_HISTORY_CHARACTERS, MAX_CHAT_HISTORY_MESSAGES
+from utils.usage import HeaderSummary, normalize_usage, safe_metadata_text
+
+MAX_SYSTEM_INSTRUCTION_CHARS = 4_000
+MAX_USER_PROMPT_CHARS = 12_000
+MAX_CHAT_RESPONSE_CHARS = 64_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,12 @@ class ChatService:
         model = require_model_operation(region, model_id, Operation.CHAT_COMPLETIONS)
         if not user_prompt.strip():
             raise ValueError("Enter a user prompt before submitting.")
+        if len(system_instruction) > MAX_SYSTEM_INSTRUCTION_CHARS:
+            raise ValueError(
+                f"System instruction is limited to {MAX_SYSTEM_INSTRUCTION_CHARS:,} characters."
+            )
+        if len(user_prompt) > MAX_USER_PROMPT_CHARS:
+            raise ValueError(f"User prompt is limited to {MAX_USER_PROMPT_CHARS:,} characters.")
         if not 1 <= max_completion_tokens <= 16_384:
             raise ValueError("Maximum completion tokens must be between 1 and 16,384.")
         messages: list[dict[str, str]] = []
@@ -69,8 +80,8 @@ class ChatService:
 def _validated_conversation(
     conversation: Sequence[Mapping[str, str]],
 ) -> list[dict[str, str]]:
-    if len(conversation) > 20:
-        conversation = conversation[-20:]
+    if len(conversation) > MAX_CHAT_HISTORY_MESSAGES:
+        conversation = conversation[-MAX_CHAT_HISTORY_MESSAGES:]
     validated: list[dict[str, str]] = []
     total_characters = 0
     for message in conversation:
@@ -79,8 +90,10 @@ def _validated_conversation(
         if role not in {"user", "assistant"} or not isinstance(content, str):
             raise ValueError("Conversation history contains an unsupported message.")
         total_characters += len(content)
-        if total_characters > 24_000:
-            raise ValueError("Conversation history exceeds the 24,000-character local limit.")
+        if total_characters > MAX_CHAT_HISTORY_CHARACTERS:
+            raise ValueError(
+                f"Conversation history exceeds the {MAX_CHAT_HISTORY_CHARACTERS:,}-character local limit."
+            )
         validated.append({"role": role, "content": content})
     return validated
 
@@ -108,8 +121,15 @@ def _parse_chat_response(
         )
     else:
         text = content if isinstance(content, str) else ""
+    if len(text) > MAX_CHAT_RESPONSE_CHARS:
+        raise ResponseFormatError(
+            response.status_code,
+            "chat_output_too_large",
+            "The chat response exceeded the safe local text limit.",
+            response.headers,
+        )
     finish_reason = choice.get("finish_reason")
-    finish_reason = finish_reason if isinstance(finish_reason, str) else None
+    finish_reason = safe_metadata_text(finish_reason) if isinstance(finish_reason, str) else None
     usage = normalize_usage(body)
     empty_guidance = None
     if not text.strip():
@@ -121,11 +141,12 @@ def _parse_chat_response(
             )
         else:
             empty_guidance = "The response was successful but contained no visible assistant text."
-    served_model = (
+    raw_served_model = (
         response.headers.routing.get("x-model-router-selected-model")
         or response.headers.routing.get("x-ms-served-model")
         or (body.get("model") if isinstance(body.get("model"), str) else None)
     )
+    served_model = safe_metadata_text(raw_served_model) if raw_served_model else None
     return ChatResult(
         status_code=response.status_code,
         requested_model=requested_model,

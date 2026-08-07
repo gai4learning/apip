@@ -9,12 +9,24 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from config.model_catalog import DEFAULT_BASE_URLS, Operation
 from utils.errors import APIMError, ResponseFormatError, error_code, guidance_for_status
 from utils.security import require_api_key
 from utils.usage import HeaderSummary, summarize_headers
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
-MAX_RESPONSE_BYTES = 40 * 1024 * 1024
+DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+ALLOWED_BASE_URLS = frozenset(url.rstrip("/") for url in DEFAULT_BASE_URLS.values())
+MAX_RESPONSE_BYTES_BY_OPERATION = {
+    Operation.CHAT_COMPLETIONS.value: 1 * 1024 * 1024,
+    Operation.IMAGE_GENERATION.value: 32 * 1024 * 1024,
+    Operation.EMBEDDINGS.value: 4 * 1024 * 1024,
+}
+MAX_REQUEST_BYTES_BY_OPERATION = {
+    Operation.CHAT_COMPLETIONS.value: 64 * 1024,
+    Operation.IMAGE_GENERATION.value: 8 * 1024,
+    Operation.EMBEDDINGS.value: 64 * 1024,
+}
 
 
 class HTTPClient(Protocol):
@@ -52,13 +64,15 @@ class CUHKAPIMClient:
         http_client: HTTPClient | None = None,
         logger: logging.Logger | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
-        max_response_bytes: int = MAX_RESPONSE_BYTES,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         try:
             self._api_key = require_api_key(api_key)
         except ValueError as error:
             raise APIMError(401, "missing_subscription_key", str(error)) from None
+        if self.base_url not in ALLOWED_BASE_URLS:
+            raise ValueError("CUHKAPIMClient requires an exact documented CUHK regional base URL.")
         if http_client is None:
             import httpx
 
@@ -72,10 +86,26 @@ class CUHKAPIMClient:
         self._max_response_bytes = max_response_bytes
 
     def operation_url(self, operation: str) -> str:
-        return f"{self.base_url}/{operation.lstrip('/')}"
+        normalized = operation.strip("/")
+        if normalized not in MAX_RESPONSE_BYTES_BY_OPERATION:
+            raise ValueError("CUHKAPIMClient does not allow this operation path.")
+        return f"{self.base_url}/{normalized}"
 
     def post(self, operation: str, payload: Mapping[str, Any]) -> APIMResponse:
+        operation = operation.strip("/")
         url = self.operation_url(operation)
+        encoded_payload = json.dumps(
+            dict(payload), ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded_payload) > MAX_REQUEST_BYTES_BY_OPERATION[operation]:
+            raise ResponseFormatError(
+                None,
+                "request_too_large",
+                "The request exceeded the safe local size limit for this operation.",
+            )
+        response_limit = min(
+            self._max_response_bytes, MAX_RESPONSE_BYTES_BY_OPERATION[operation]
+        )
         headers = {
             "api-key": self._api_key,
             "content-type": "application/json",
@@ -83,7 +113,7 @@ class CUHKAPIMClient:
         }
         started = time.perf_counter()
         try:
-            response = self._send(url, headers, payload)
+            response = self._send(url, headers, payload, response_limit)
         except APIMError:
             raise
         except Exception:  # noqa: BLE001 - transport implementations vary
@@ -148,6 +178,7 @@ class CUHKAPIMClient:
         url: str,
         headers: Mapping[str, str],
         payload: Mapping[str, Any],
+        max_response_bytes: int,
     ) -> _BufferedResponse:
         if self._stream_responses:
             with self._http.stream(
@@ -158,11 +189,13 @@ class CUHKAPIMClient:
                 timeout=self._timeout,
             ) as response:
                 response_headers = dict(response.headers)
-                self._reject_declared_oversize(response.status_code, response_headers)
+                self._reject_declared_oversize(
+                    response.status_code, response_headers, max_response_bytes
+                )
                 content = bytearray()
                 for chunk in response.iter_bytes():
                     content.extend(chunk)
-                    if len(content) > self._max_response_bytes:
+                    if len(content) > max_response_bytes:
                         raise self._oversize_error(response.status_code, response_headers)
                 return _BufferedResponse(
                     int(response.status_code), response_headers, bytes(content)
@@ -176,14 +209,17 @@ class CUHKAPIMClient:
         )
         response_headers = dict(getattr(response, "headers", {}))
         status_code = int(response.status_code)
-        self._reject_declared_oversize(status_code, response_headers)
+        self._reject_declared_oversize(status_code, response_headers, max_response_bytes)
         content = bytes(getattr(response, "content", b""))
-        if len(content) > self._max_response_bytes:
+        if len(content) > max_response_bytes:
             raise self._oversize_error(status_code, response_headers)
         return _BufferedResponse(status_code, response_headers, content)
 
     def _reject_declared_oversize(
-        self, status_code: int, headers: Mapping[str, str]
+        self,
+        status_code: int,
+        headers: Mapping[str, str],
+        max_response_bytes: int,
     ) -> None:
         lowered = {str(key).lower(): str(value) for key, value in headers.items()}
         value = lowered.get("content-length")
@@ -191,7 +227,7 @@ class CUHKAPIMClient:
             declared_length = int(value) if value else 0
         except ValueError:
             declared_length = 0
-        if declared_length > self._max_response_bytes:
+        if declared_length > max_response_bytes:
             raise self._oversize_error(status_code, headers)
 
     @staticmethod

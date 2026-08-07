@@ -22,7 +22,10 @@ if TYPE_CHECKING:
 
 def show_get_started(settings: Settings) -> None:
     st.title("Get Started")
-    st.error("Local-only learning tool: keep it inside the Codespace and do not expose public ingress.")
+    st.error(
+        "Local-only learning tool: keep the Codespaces forwarded port private and do not expose "
+        "public ingress. Model output is shown as untrusted plain text."
+    )
     st.write(
         "**Starter** is a limited sampler for learning, smoke tests, and small non-sensitive model "
         "comparisons. It is not for production, sustained applications, repository-scale agents, or "

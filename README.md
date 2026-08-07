@@ -31,7 +31,9 @@ Use only the **APIM subscription key** issued for the relevant product or projec
 - Exported session statistics contain allowlisted metadata only.
 - Use synthetic or de-identified inputs for initial testing. Do not submit confidential, personal, assessment-restricted, research-sensitive, or regulated data without an approved product and handling conditions.
 - If exposure is suspected, stop using the key and request rotation. Do not display the key while diagnosing the problem.
-- Model output requires review. Follow CUHK responsible-use and academic-honesty requirements.
+- Model output is rendered as plain text by default, so untrusted responses cannot create clickable Markdown links or remote Markdown resources.
+- Chat history and local usage records are bounded in memory; generated images and statistics can be cleared from the session.
+- Resolver-generated dependency locks pin exact versions and artifact hashes in `requirements.lock` and `requirements-dev.lock`; CI regenerates, clean-installs, compatibility-checks, and vulnerability-audits them.
 
 An APIM subscription credential is not an Azure subscription and is not a Foundry backend credential.
 
@@ -54,11 +56,11 @@ CUHK_DEFAULT_IMAGE_MODEL=gpt-image-2
 CUHK_DEFAULT_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
-The key may instead be entered as a temporary password-masked UI override. Existing Kiro Web setups that inject a secret named `AZURE_API_KEY` are accepted as a migration alias, but new configurations should use `CUHK_APIM_API_KEY`. Do not put either key in browser-local storage or source control. The application validates that a key is nonblank only when a request is made, so the UI and tests start without a live key.
+The key may instead be entered as a temporary password-masked UI override. Only `CUHK_APIM_API_KEY` is accepted; the generic `AZURE_API_KEY` name is deliberately ignored so an unrelated Azure or backend credential cannot be sent to APIM. Do not put the key in browser-local storage or source control. The application validates that a key is nonblank only when a request is made, so the UI and tests start without a live key.
 
 ## 4. Installation
 
-Python **3.11 or newer** is required. The repository includes `.python-version` for the Codespace `pyenv` runtime. Verify the selected interpreter before installing:
+Python **3.11.x** is required. The repository includes `.python-version` for the Codespace `pyenv` runtime. Verify the selected interpreter before installing:
 
 ```bash
 pyenv install -s 3.11.15
@@ -66,8 +68,43 @@ pyenv local 3.11.15
 python --version
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock
+# Add the locked test tools when developing:
+python -m pip install --require-hashes -r requirements-dev.lock
 ```
+
+The checked-in files are resolver-generated, hash-locked dependency graphs for Python 3.11 on Linux Codespaces. `requirements.in` and `requirements-dev.in` record direct intent; `requirements.txt` remains a backward-compatible development entry point. The local checker validates exact direct versions and requires artifact hashes for every locked package:
+
+```bash
+python scripts/check_dependency_lock.py
+```
+
+In a connected, trusted Codespace, regenerate both hash-locked files with the pinned resolver whenever direct dependencies change:
+
+```bash
+python -m pip install 'uv==0.12.1'
+uv pip compile requirements.in \
+  --python-version 3.11.15 \
+  --python-platform x86_64-unknown-linux-gnu \
+  --generate-hashes \
+  -o requirements.lock
+uv pip compile requirements-dev.in \
+  --python-version 3.11.15 \
+  --python-platform x86_64-unknown-linux-gnu \
+  --generate-hashes \
+  -o requirements-dev.lock
+python scripts/check_dependency_lock.py
+```
+
+Audit the resulting runtime graph with the reviewed audit tool version:
+
+```bash
+uvx --from pip-audit==2.10.1 pip-audit -r requirements.lock
+```
+
+The GitHub security-verification workflow independently regenerates both lock files and compares them byte-for-byte with the committed versions. It then enforces hashes during a clean installation, runs `pip check`, executes the pinned audit, and runs lint, compilation, and the full mocked test suite.
+
+Exact pins and hashes do not by themselves prove that dependencies remain vulnerability-free. Keep successful resolver comparison, clean installation, `python -m pip check`, and audit results as merge gates.
 
 ## 5. Run the Streamlit app
 
@@ -75,7 +112,7 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Keep the Codespace port private. Do not add a cloud deployment manifest, public tunnel, public ingress, or hosted authentication layer for this learning tool.
+Tracked Streamlit configuration binds the process to `127.0.0.1`, enables CORS and XSRF protection, disables static file serving and usage telemetry, and the app refuses a non-loopback server address. **The Codespaces forwarded port must still remain private** because a public forwarding proxy can reach a loopback-bound process. Do not add a public tunnel, public ingress, or hosted authentication layer to this learning tool.
 
 Navigation:
 
@@ -172,7 +209,7 @@ Select **Chat**, **East US 2**, and `gpt-5.4-mini`. The default smoke test is:
 }
 ```
 
-For WUS3, select `gpt-5.6-sol`; the operation remains `/chat/completions`. The UI displays HTTP status, requested and served model/version, region, finish reason, token usage including reasoning tokens when present, request IDs, responsible-AI indication, and latency. It shows only allowlisted response headers and never credential headers or trace output.
+For WUS3, select `gpt-5.6-sol`; the operation remains `/chat/completions`. Model output is rendered as plain text. The UI displays HTTP status, requested and served model/version, region, finish reason, token usage including reasoning tokens when present, request IDs, responsible-AI indication, and latency. It shows only bounded, allowlisted response headers and never credential headers or trace output. Chat responses are bounded to 64,000 visible characters, and session history retains at most 20 messages and 24,000 characters.
 
 Temperature and streaming are not exposed unless catalogue and implementation support are explicitly validated. The modern templates do not use legacy `max_tokens`.
 
@@ -215,7 +252,7 @@ Send to `https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1/images/generatio
 
 Use the same body with `"model": "gpt-image-1.5"` and send it to `https://cuhk-apip.azure-api.net/foundry-wus3/openai/v1/images/generations`.
 
-The selector prevents cross-region pairing. The service bounds the response size, strictly decodes Base64 in memory, verifies PNG/JPEG/WebP content, displays the image, and offers a local download. Base64 is never logged, rendered as text, or exported. Missing/malformed `b64_json` yields a sanitized diagnostic and request ID.
+The selector prevents cross-region pairing. The service validates the returned image count before decoder work, bounds the response and decoded sizes, verifies the requested PNG/JPEG/WebP container signature before Pillow dispatch, then checks complete decoding, exact dimensions, and pixel count. It displays the image and offers a local download. Base64 is never logged, rendered as text, or exported. Missing/malformed `b64_json` yields a sanitized diagnostic and request ID.
 
 Image cost depends on model, quality, size, and count. Do not infer it from language-token headers. Initially assess image use through request-rate and call quotas.
 
@@ -245,7 +282,7 @@ Multiple input:
 }
 ```
 
-The comparison sends all texts in one request, verifies vector count and dimensions, and computes a readable cosine-similarity matrix. Inputs are bounded to eight texts, 4,000 characters each, and 12,000 combined characters. The full vector is never displayed by default, logged, or exported; users can explicitly reveal only the first and last eight values.
+The comparison sends all texts in one request, verifies vector count, indices, dimensions, finite numeric values, a maximum dimension of 4,096, and an aggregate scalar ceiling before copying vectors or calculating similarity. Inputs are bounded to eight texts, 4,000 characters each, and 12,000 combined characters. The full vector is never displayed by default, logged, or exported; users can explicitly reveal only the first and last eight values.
 
 Similarity is a mathematical comparison—not a factual or quality judgment—and must not be interpreted as plagiarism, authorship, intent, or academic misconduct. Do not claim one embedding model is more accurate without authoritative evidence.
 
@@ -263,7 +300,7 @@ Current intended Starter presentation:
 
 Product call limits and API token limits are separate; the first reached stops usage. A VS Code Agent task can make multiple API requests. A shared Starter subscription must not be used for a synchronized class. Do not assume images are priced through language-token consumption or embeddings emit the same metrics as Chat Completions.
 
-The UI keeps four concepts separate:
+The UI keeps four concepts separate and bounds application-side records to the newest 100 entries:
 
 1. **CUHK APIM allowance:** `x-cuhk-tokens-consumed`, TPM remaining, monthly tokens remaining, and `Retry-After` when returned.
 2. **Foundry backend capacity:** separately labeled `x-ratelimit-*` headers.
@@ -330,14 +367,16 @@ Tests use mocks/fakes and never call live CUHK APIs or require a real key.
 python -m pytest -q
 ```
 
-Optional local checks:
+Required local checks:
 
 ```bash
-python -m compileall -q .
-python -c "import app"
+ruff check .
+python -m py_compile app.py get_started.py clients/*.py config/*.py services/*.py utils/*.py scripts/*.py tests/*.py
+python scripts/check_dependency_lock.py
+python -m pytest -q
 ```
 
-The test suite covers catalogue mappings, URL/header construction, `max_completion_tokens`, response and header parsing, Model Router metadata, image decoding/error paths, embedding validation and cosine similarity, redaction, sanitized exports, user-facing errors, importability, and keyless Streamlit startup.
+Run the dependency audit from the installation section in a connected environment. The test suite covers catalogue mappings, fixed URL/header construction, redirect prevention, request/response ceilings, `max_completion_tokens`, response and bounded header parsing, Model Router metadata, image count/signature/size/error paths, embedding dimension and scalar limits, plain-text rendering, bounded session retention, redaction, sanitized exports, user-facing errors, importability, and keyless loopback-only Streamlit startup.
 
 ## 18. Manual smoke-test sequence
 
@@ -357,6 +396,16 @@ After mocked tests pass and the required APIM operations are confirmed:
 Live testing requires APIM product access plus these exposed operations: regional `/chat/completions`, regional `/images/generations`, and EUS2 `/embeddings`. Responses, realtime, translation, whisper, and transcription remain catalogue-only in this UI.
 
 ## 19. Change log
+
+### 2026-08 — Security and resource hardening
+
+- locked the reviewed runtime and development dependency graphs and added lock-consistency and audit guidance;
+- restricted outbound requests to exact CUHK APIM origins and operation paths, with redirects disabled and bounded request/response bodies;
+- removed the generic Azure key fallback and enforced loopback-only Streamlit binding with private Codespaces forwarding guidance;
+- rendered model output as plain text and bounded prompts, visible responses, headers, metadata, exports, chat history, and session statistics;
+- validated image cardinality and container signatures before bounded Pillow decoding;
+- bounded embedding dimensions and aggregate scalar counts before vector copying or similarity work;
+- expanded mocked regression coverage for the hardening controls without live API calls or credentials.
 
 ### 2026-08 — EUS2/WUS3 Foundry modernization
 
