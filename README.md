@@ -1,300 +1,373 @@
-# CUHK Azure OpenAI API Tester
+# CUHK Foundry API Local Learning Tool
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+A local-only Streamlit application for learning, smoke-testing, and comparing the current CUHK Foundry Models APIs through CUHK API Management (APIM). It demonstrates capability-aware regional routing for Chat Completions, Model Router, image generation, and embeddings without exposing credentials or sending specialized models to the wrong operation.
 
-A simple Streamlit web application for testing the CUHK Azure OpenAI API. This tool helps students learn and experiment with the API while monitoring their usage.
+> **Migration note for 2026–27 classes and new users:** use **CUHK Foundry Models EUS2** or **CUHK Foundry Models WUS3** through the OpenAI v1 routes documented here. Do not start new demonstrations with retired legacy Azure OpenAI deployment URLs, dated `api-version` parameters, or superseded model lists.
 
-⚠️ **IMPORTANT: Local Development Only**
-- This repository is for **learning purposes only**
-- Run the application **locally** on your machine
-- Do NOT deploy to cloud platforms
-- Keep your API keys secure and never expose them online
-- For learning use only
+> **Local-only warning:** run this app only inside your Codespace for individual learning and testing. Do not add public ingress, publish it as a hosted application, or use it as a production service.
 
-## 🛡️ Security Notice
+## 1. Project purpose
 
-This application is designed for local development and learning purposes only. Deploying it to the cloud or public servers poses several risks:
+The tool provides:
 
-1. **API Key Exposure**: Your CUHK Azure OpenAI API key could be exposed, leading to:
-   - Unauthorized usage of your quota
-   - Potential misuse of CUHK's resources
-   - Risk of exceeding rate limits
+- region- and capability-aware model selection from one typed catalogue;
+- Chat Completions smoke tests for EUS2 and WUS3;
+- a dedicated Model Router explanation and test;
+- regional image-generation tests with safe in-memory Base64 decoding;
+- EUS2 embedding inspection and bounded multi-text cosine comparison;
+- separate views for response-body usage, CUHK APIM allowance headers, Foundry backend capacity headers, and local session statistics;
+- quick-start, limits, special-access, security, responsible-use, and academic-honesty guidance.
 
-2. **Access Control**: The app doesn't implement:
-   - User authentication
-   - Rate limiting
-   - IP restrictions
-   - Other security measures needed for production
+Starter is a limited sampler. It is not intended for production, sustained repository review, synchronized teaching, or shared credentials.
 
-3. **Compliance**: Public deployment may violate:
-   - CUHK's API usage policies
-   - Data protection requirements
-   - Service terms and conditions
+## 2. Security notice
 
-**Always run this application locally and never share your API keys!**
+Use only the **APIM subscription key** issued for the relevant product or project. Do not request, distribute, or configure a Foundry backend key.
 
-## 📚 Academic Honesty Notice
+- Never commit `.env`, keys, bearer tokens, or local secret files.
+- Never share a key in email, chat, screenshots, notebooks, source code, logs, or documentation.
+- The optional UI key field is password-masked and is not included in app exports or logs.
+- Logs contain operation metadata only. They exclude prompts, complete request/response bodies, headers, keys, Base64 images, embedding vectors, and source files.
+- Exported session statistics contain allowlisted metadata only.
+- Use synthetic or de-identified inputs for initial testing. Do not submit confidential, personal, assessment-restricted, research-sensitive, or regulated data without an approved product and handling conditions.
+- If exposure is suspected, stop using the key and request rotation. Do not display the key while diagnosing the problem.
+- Model output requires review. Follow CUHK responsible-use and academic-honesty requirements.
 
-CUHK places very high importance on academic honesty. Use of these APIs must comply with [CUHK's Policy on Academic Honesty](https://www.cuhk.edu.hk/policy/academichonesty/):
+An APIM subscription credential is not an Azure subscription and is not a Foundry backend credential.
 
-1. **Appropriate Use**:
-   - Use the API as a learning tool to understand AI capabilities
-   - Practice responsible AI development
-   - Enhance your understanding of AI concepts
+## 3. Environment-variable setup
 
-2. **Prohibited Uses**:
-   - Do NOT use the API to generate assignments or exam answers
-   - Do NOT submit AI-generated content as your own work
-   - Do NOT use the API to assist in any form of academic dishonesty
+Copy the template and fill only your local `.env`:
 
-3. **Consequences**:
-   - CUHK maintains a zero-tolerance policy on academic dishonesty
-   - Violations may lead to disciplinary action
-   - Serious cases may result in termination of studies
-
-Always consult with your professors about appropriate use of AI tools in your coursework. When in doubt, ask first!
-
-## 🔒 Security Best Practices
-
-1. **API Key Protection**:
-   - NEVER share your API key with anyone
-   - NEVER commit your `.env` file to version control
-   - NEVER expose your key in public repositories or forums
-   - NEVER include your key in screenshots or shared code
-   - Immediately report if you suspect your key has been compromised
-
-2. **Local Development Only**:
-   - This app is designed for local use only
-   - DO NOT deploy to public servers or cloud platforms
-   - DO NOT expose the app outside your local network
-   - Always run on localhost (127.0.0.1)
-
-3. **Data Privacy**:
-   - Be mindful of what data you send to the API
-   - DO NOT submit sensitive or personal information
-   - DO NOT submit confidential university data
-   - Consider data privacy regulations when using the service
-
-
-
-## ⚠️ AI Content Disclaimer
-
-Please be aware of the following regarding AI-generated content:
-
-1. **Accuracy**: While AI models strive for accuracy, they may occasionally:
-   - Provide incorrect or outdated information
-   - Make mistakes in calculations or reasoning
-   - Generate plausible-sounding but inaccurate responses
-
-2. **Limitations**:
-   - AI responses should be verified, especially for critical applications
-   - Models may exhibit biases present in their training data
-   - Complex or nuanced topics may require human expertise and verification
-
-3. **Best Practices**:
-   - Always verify important information from authoritative sources
-   - Use AI-generated content as a starting point, not the final answer
-   - Exercise critical thinking and professional judgment
-   - When in doubt, consult with professors or domain experts
-
-## 💡 Features
-
-- Test API calls with predefined cases
-- Monitor API usage and rate limits
-- View code examples
-- Track API response times
-- Export usage statistics
-
-## ⚠️ Important Notes
-
-1. This is a learning tool - use it responsibly
-2. Keep your API key secure
-3. Monitor your usage to avoid hitting limits
-4. Plan ahead if you need expanded access 
-
-## 🚀 Getting Started
-
-### Prerequisites
-- CUHK account
-- Python 3.8 or higher
-- Git (for cloning the repository)
-
-1. **Prerequisites**:
-   ```bash
-   # Make sure you have Python 3.8+ installed
-   python --version
-   
-   # Create and activate a virtual environment
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-2. **Installation**:
-   ```bash
-   # Clone this repository
-   git clone https://github.com/gai4learning/apip.git
-   cd apip
-   
-   # Install dependencies
-   pip install -r requirements.txt
-   
-   # Set up environment variables
-   cp .env.example .env
-   # Edit .env with your API key
-   ```
-
-3. **Running the App**:
-   ```bash
-   streamlit run app.py
-   ```
-
-4. **First Time Setup**:
-   - Get your API key (see Getting Your API Key below)
-   - Enter your key in the app
-   - Test with a simple prompt first
-   - Check the logs to ensure everything works
-
-5. **Troubleshooting**:
-   - Check the logs in the sidebar
-   - Verify your API key is correct
-   - Ensure you're within rate limits
-   - Read error messages carefully
-
-### Getting Your API Key
-
-1. **Access the Portal**
-   - Go to [CUHK API Developer Portal](https://cuhk-apip.developer.azure-api.net/)
-   - Sign up / in with your CUHK account (top right corner)
-
-2. **Subscribe to Starter Plan**
-   - Navigate to "Products" in the top menu
-   - Click on "Starter"
-   - Under "Your subscription", enter "Starter" as "Your new product subscription name"
-   - Click "Subscribe"
-   - You should be automatically re-directed to "Profile" to review the Subscription information
-
-3. **Get Your API Keys**
-   - After approval, you'll see both Primary and Secondary keys
-   - Use either key in your `.env` file
-   - Regenerate your keys as needed or regularly
-
-4. **Monitor Your usage**
-   - Regularly review your usage of the APIs under "Reports"
-
-### Available Models
-
-1. **Chat Models**:
-   - `gpt-4o-mini`: Quick responses, good for testing and simple tasks
-   - `gpt-4o`: Complex reasoning, detailed explanations, and longer contexts
-   - `o1-mini`: Latest model with improved efficiency and quality
-
-2. **Image Generation** (EUS2 endpoint):
-   Two approaches — same API key works for both:
-
-   **Direct (`images/generations` endpoint)**:
-   - `gpt-image-1.5`: High-quality image generation
-   - `gpt-image-1-mini`: Faster, lighter image generation
-
-   **Responses API (GPT orchestrated)**:
-   - `gpt-4o` + `gpt-image-1.5`: GPT-4o decides when to generate an image
-   - `gpt-4o` + `gpt-image-1-mini`: Same but with the mini image model
-
-3. **Embedding Models**:
-   - `text-embedding-ada-002`: Legacy model for:
-     - Basic semantic search
-     - Text similarity
-     - Content clustering
-   - `text-embedding-3-small`: Latest model for:
-     - Improved semantic understanding
-     - Better multilingual support
-     - More accurate similarity comparisons
-
-## 📊 Usage Limits
-
-### Starter Subscription Limits
-- 5 calls per minute
-- 100 calls per week maximum
-- Email notification at 75% of quota
-- Weekly quota renewal
-
-## ⚠️ Usage Monitoring
-
-Your API usage is monitored by CUHK. Please note:
-
-1. **Usage Tracking**:
-   - All API calls are logged and monitored
-   - Usage patterns are analyzed for abnormal behavior
-   - Rate limits and weekly quotas are strictly enforced
-
-2. **Warning**:
-   Excessive or abnormal usage patterns and use of the APIs for purposes other than learning will result in:
-   - Immediate suspension of your API access
-   - Investigation of usage patterns
-   - Reporting to relevant academic units
-   - Possible disciplinary actions
-
-3. **Prohibited Activities**:
-   - Attempting to circumvent rate limits
-   - Sharing API keys with others
-   - Using the service for non-academic purposes
-   - Automated mass requests
-   - Any form of commercial use
-
-Use the API responsibly and only for authorized academic purposes. If you need increased limits for legitimate academic work, please follow the proper channels to request expanded access.
-
-## 📈 Need More Access?
-
-If you need higher rate limits or access to additional features, you'll need to request expanded access.
-
-### When to Request More Access
-- Hitting rate limits frequently
-- Need higher throughput
-- Require access to more models
-- Working on research projects
-
-### How to Request
-
-1. **Prepare Information**:
-   - Project name and description
-   - Course code (if applicable)
-   - Expected duration
-   - Usage requirements
-   - Technical justification
-
-2. **Submit Request**:
-   - Access the ITSC Service Desk System:
-     - [ServiceDesk Portal](http://servicedesk.itsc.cuhk.edu.hk)
-   - Create a new General Enquiry under Category E-Learning Service
-   - Category: "Azure OpenAI API - Access Extension Request"
-   - Include your supervisor's information if applicable
-
-3. **Request Template**:
-```
-Subject: Azure OpenAI API - Access Extension Request
-
-Project Details:
-- Name: [Your Project Name]
-- Course: [Course Code, if applicable]
-- Duration: [Expected timeline]
-
-Current Limitations:
-- [Describe what limits you're hitting]
-
-Requested Access:
-- [Specify needed rate limits]
-- [List required models]
-
-Justification:
-- [Brief explanation]
-
+```bash
+cp .env.example .env
 ```
 
-## 📚 Additional Resources
+```dotenv
+# APIM subscription key—not a Foundry backend key
+CUHK_APIM_API_KEY=
+CUHK_EUS2_BASE_URL=https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1
+CUHK_WUS3_BASE_URL=https://cuhk-apip.azure-api.net/foundry-wus3/openai/v1
+CUHK_DEFAULT_REGION=EUS2
+CUHK_DEFAULT_CHAT_MODEL=gpt-5.4-mini
+CUHK_DEFAULT_IMAGE_MODEL=gpt-image-2
+CUHK_DEFAULT_EMBEDDING_MODEL=text-embedding-3-small
+```
 
-- [CUHK API Portal for Teaching and Learning](https://cuhk-apip.developer.azure-api.net/)
-- [Azure OpenAI Reference](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference)
-- [Azure OpenAI API Specs Version](https://github.com/Azure/azure-rest-api-specs/tree/main/specification/cognitiveservices/data-plane/AzureOpenAI/inference)
-- [Azure OpenAI Service Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-services/openai/quotas-limits)
-- [OpenAI API Key Safety Best Practices](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)
-- [OpenAI Best Practices for API Usage](https://platform.openai.com/docs/guides/rate-limits/best-practices)
+The key may instead be entered as a temporary password-masked UI override. Existing Kiro Web setups that inject a secret named `AZURE_API_KEY` are accepted as a migration alias, but new configurations should use `CUHK_APIM_API_KEY`. Do not put either key in browser-local storage or source control. The application validates that a key is nonblank only when a request is made, so the UI and tests start without a live key.
 
+## 4. Installation
+
+Python **3.11 or newer** is required. The repository includes `.python-version` for the Codespace `pyenv` runtime. Verify the selected interpreter before installing:
+
+```bash
+pyenv install -s 3.11.15
+pyenv local 3.11.15
+python --version
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+## 5. Run the Streamlit app
+
+```bash
+streamlit run app.py
+```
+
+Keep the Codespace port private. Do not add a cloud deployment manifest, public tunnel, public ingress, or hosted authentication layer for this learning tool.
+
+Navigation:
+
+- Get Started
+- Chat
+- Model Router
+- Image Generation
+- Embeddings
+- Usage and Limits
+- Special Access
+- About / Safety
+
+## 6. Current regional endpoints
+
+| API | OpenAI-compatible base URL |
+|---|---|
+| CUHK Foundry Models EUS2 | `https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1` |
+| CUHK Foundry Models WUS3 | `https://cuhk-apip.azure-api.net/foundry-wus3/openai/v1` |
+
+Required operation paths:
+
+| Capability | Request |
+|---|---|
+| Chat Completions | `POST <regional-base>/chat/completions` |
+| Responses | `POST <regional-base>/responses` |
+| Image generation | `POST <regional-base>/images/generations` |
+| Embeddings | `POST <EUS2-base>/embeddings` |
+
+Requests send the subscription credential only as `api-key: <subscription key>`. Normal OpenAI v1 Chat Completions requests do not append a dated `api-version` parameter. The app does not automatically fail over between regions.
+
+## 7. Regional model catalogue
+
+The code source of truth is [`config/model_catalog.py`](config/model_catalog.py). “Validated” below means the model-operation path was externally validated as stated in the supplied 4 August 2026 guide. Regional mapping alone does not imply a live operation test.
+
+### East US 2
+
+| Deployment | Capability | Initial operation / UI handling | Status |
+|---|---|---|---|
+| `gpt-5.4-nano` | Language | Chat Completions; Responses support requires separate operation validation | Available for testing |
+| `gpt-5.4-mini` | Language | Chat Completions | Validated |
+| `gpt-5.4` | Language | Chat Completions | Validated |
+| `gpt-5.4-pro` | Language | Chat Completions combination pending | Available for testing |
+| `gpt-5.3-codex` | Coding | Responses; UI not yet implemented | Validation pending |
+| `model-router` | Routing | Chat Completions | Validated |
+| `gpt-image-2` | Image | Images Generations | Available for testing |
+| `gpt-realtime-2` | Realtime/audio | Operation-specific realtime session; UI not implemented | Validation pending |
+| `gpt-realtime-2.1` | Realtime/audio | Operation-specific realtime session; UI not implemented | Validation pending |
+| `gpt-realtime-2.1-mini` | Realtime/audio | Operation-specific realtime session; UI not implemented | Validation pending |
+| `gpt-realtime-translate` | Translation/audio | Matching realtime/audio operation; UI not implemented | Validation pending |
+| `gpt-realtime-whisper` | Speech recognition | Matching realtime/audio operation; UI not implemented | Validation pending |
+| `gpt-4o-transcribe` | Transcription | Multipart transcription operation; UI not implemented | Validation pending |
+| `text-embedding-3-small` | Embeddings | Embeddings | Available for testing; recommended first |
+| `text-embedding-3-large` | Embeddings | Embeddings | Available for testing |
+| `text-embedding-ada-002` | Embeddings | Embeddings | Legacy compatibility; validation pending |
+
+### West US 3
+
+| Deployment | Capability | Initial operation | Status |
+|---|---|---|---|
+| `gpt-5.6-sol` | Chat | Chat Completions | Validated |
+| `gpt-5.6-luna` | Chat | Chat Completions | Available for testing |
+| `gpt-5.6-terra` | Chat | Chat Completions | Available for testing |
+| `gpt-image-1.5` | Image | Images Generations | Available for testing |
+
+Availability and served versions can change. Check the official API portal before creating a dependency. The app prevents invalid regional image and embedding combinations.
+
+## 8. Capability-to-operation mapping
+
+Do not reuse one request body for every deployment.
+
+| Capability/workflow | Operation | Output/request field | App support |
+|---|---|---|---|
+| GPT-5.4/GPT-5.6 chat | Chat Completions | `max_completion_tokens` | Implemented |
+| Model Router chat | Chat Completions | `max_completion_tokens` | Implemented |
+| Responses workflows | Responses | `max_output_tokens` | Not yet implemented |
+| Image generation | Images Generations | image-specific schema | Implemented |
+| Embeddings | Embeddings | `input` string or array | Implemented for EUS2 |
+| Transcription | Audio transcription | multipart file/audio schema | Not yet implemented |
+| Realtime/translation | Matching realtime/audio operation | operation-specific protocol | Not yet implemented |
+
+The app does not route realtime, translation, whisper, transcription, coding/Responses, image, or embedding deployments through Chat Completions and does not fabricate templates for unimplemented operations.
+
+## 9. Chat test
+
+Select **Chat**, **East US 2**, and `gpt-5.4-mini`. The default smoke test is:
+
+```json
+{
+  "model": "gpt-5.4-mini",
+  "messages": [
+    {"role": "user", "content": "Reply exactly with: CUHK APIM test successful."}
+  ],
+  "max_completion_tokens": 100
+}
+```
+
+For WUS3, select `gpt-5.6-sol`; the operation remains `/chat/completions`. The UI displays HTTP status, requested and served model/version, region, finish reason, token usage including reasoning tokens when present, request IDs, responsible-AI indication, and latency. It shows only allowlisted response headers and never credential headers or trace output.
+
+Temperature and streaming are not exposed unless catalogue and implementation support are explicitly validated. The modern templates do not use legacy `max_tokens`.
+
+## 10. Model Router test
+
+Select **Model Router**. The request uses EUS2 `model-router` with a larger default allowance:
+
+```json
+{
+  "model": "model-router",
+  "messages": [
+    {"role": "user", "content": "Reply in exactly one short sentence: Why is an API gateway useful?"}
+  ],
+  "max_completion_tokens": 1000
+}
+```
+
+The requested deployment is `model-router`, but the router may select another model. When supplied, the app reports `x-model-router-selected-model`, routing mode, fallback status, and `x-ms-served-model`. Reasoning tokens can consume the completion allowance. A low allowance can cause empty visible output with `finish_reason: length`. Do not calculate cost from the alias alone.
+
+## 11. Image-generation tests
+
+Starter mode defaults and constrains `n` to `1`, with size `1024x1024`, quality `low`, and format `png`.
+
+### EUS2
+
+```json
+{
+  "model": "gpt-image-2",
+  "prompt": "A clean abstract illustration of a university digital learning platform, blue and purple palette, simple geometric forms, no text",
+  "size": "1024x1024",
+  "quality": "low",
+  "output_format": "png",
+  "n": 1
+}
+```
+
+Send to `https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1/images/generations`.
+
+### WUS3
+
+Use the same body with `"model": "gpt-image-1.5"` and send it to `https://cuhk-apip.azure-api.net/foundry-wus3/openai/v1/images/generations`.
+
+The selector prevents cross-region pairing. The service bounds the response size, strictly decodes Base64 in memory, verifies PNG/JPEG/WebP content, displays the image, and offers a local download. Base64 is never logged, rendered as text, or exported. Missing/malformed `b64_json` yields a sanitized diagnostic and request ID.
+
+Image cost depends on model, quality, size, and count. Do not infer it from language-token headers. Initially assess image use through request-rate and call quotas.
+
+## 12. Embedding tests
+
+Embeddings are EUS2-only in this catalogue. `text-embedding-3-small` is the recommended first model; `text-embedding-ada-002` is retained only for legacy compatibility.
+
+Single input:
+
+```json
+{
+  "model": "text-embedding-3-small",
+  "input": "CUHK AI API Portal embedding test"
+}
+```
+
+Multiple input:
+
+```json
+{
+  "model": "text-embedding-3-small",
+  "input": [
+    "Digital learning infrastructure",
+    "Generative AI for university teaching",
+    "Secure API governance"
+  ]
+}
+```
+
+The comparison sends all texts in one request, verifies vector count and dimensions, and computes a readable cosine-similarity matrix. Inputs are bounded to eight texts, 4,000 characters each, and 12,000 combined characters. The full vector is never displayed by default, logged, or exported; users can explicitly reveal only the first and last eight values.
+
+Similarity is a mathematical comparison—not a factual or quality judgment—and must not be interpreted as plagiarism, authorship, intent, or academic misconduct. Do not claim one embedding model is more accurate without authoritative evidence.
+
+## 13. Rate and quota explanation
+
+Current intended Starter presentation:
+
+| Control | Limit | Scope | Typical result |
+|---|---|---|---|
+| Product call rate | 10 calls per 60 seconds | APIM subscription | HTTP 429 |
+| Product call quota | 100 calls per seven days | APIM subscription across product APIs | HTTP 403 |
+| Language-model token rate | 250,000 TPM where configured | APIM subscription | HTTP 429 with `Retry-After` |
+| Monthly language-model tokens | 5,000,000 | APIM subscription | HTTP 403 |
+| Backend capacity | deployment-specific | Foundry quota scope | backend HTTP 429 |
+
+Product call limits and API token limits are separate; the first reached stops usage. A VS Code Agent task can make multiple API requests. A shared Starter subscription must not be used for a synchronized class. Do not assume images are priced through language-token consumption or embeddings emit the same metrics as Chat Completions.
+
+The UI keeps four concepts separate:
+
+1. **CUHK APIM allowance:** `x-cuhk-tokens-consumed`, TPM remaining, monthly tokens remaining, and `Retry-After` when returned.
+2. **Foundry backend capacity:** separately labeled `x-ratelimit-*` headers.
+3. **Response-body usage:** operation-provided token fields.
+4. **Application-side session statistics:** local allowlisted metadata; not an APIM counter or billing ledger.
+
+## 14. Error guide
+
+| Symptom | Guidance |
+|---|---|
+| Missing key / HTTP 401 | Configure a valid APIM subscription key. The app never echoes it. |
+| HTTP 400 `max_tokens` unsupported | Use `max_completion_tokens` for modern Chat Completions models. |
+| HTTP 400 `unknown_model` | Choose an exact deployment from the selected regional API. |
+| HTTP 403 | A call/token quota, product authorization, or another access condition may have been reached. |
+| HTTP 404 | Check region and operation path; the specialized operation may not be exposed by the APIM contract. The app does not silently reroute it to chat. |
+| HTTP 429 | Distinguish APIM call rate, APIM token rate, and backend deployment capacity; observe `Retry-After`. |
+| HTTP 200 with empty output | Inspect `finish_reason` and reasoning usage; increase `max_completion_tokens` when the reason is `length`. |
+| Image missing `b64_json` | Record the sanitized request ID; do not paste the whole response or Base64 into support channels. |
+| Embedding count/dimension mismatch | Similarity calculation stops with a structured error. |
+| Malformed JSON | Record status and request IDs; do not expose trace or credentials. |
+
+If an operation is unavailable, confirm that the APIM API contract exposes it. Do not substitute Chat Completions for a specialized operation.
+
+## 15. Special product request guidance
+
+Use Starter for individual learning and short non-sensitive tests. Teachers, TAs, FYP leaders, research projects, repository-scale agents, sustained applications, and synchronized classes should request a dedicated product. One personal Starter key must not be shared with a class.
+
+No authoritative mailbox, form, or service-desk category is documented in this repository. Use the official ITSC service channel and include:
+
+- request title;
+- requestor and unit;
+- accountable teacher, supervisor, PI, or service owner;
+- course/project and purpose;
+- number and type of users;
+- requested start/end dates;
+- required models and operations;
+- expected simultaneous users and calls per minute;
+- expected monthly usage or budget ceiling;
+- data classification;
+- client type;
+- required reporting;
+- funding/cost ownership;
+- approvals;
+- operational and backup contacts.
+
+A reusable copy/paste template is available on the app’s **Special Access** page.
+
+## 16. Troubleshooting
+
+1. Confirm `.env` exists locally but is not tracked: `git status --short` must not show it.
+2. Confirm the key is an active APIM product subscription key, not a Foundry backend key.
+3. Confirm the selected region contains the exact model ID.
+4. Confirm the capability uses the selected operation.
+5. Confirm base URLs end at `/openai/v1`, without a dated `api-version` query.
+6. For 429, inspect the separately labeled CUHK allowance and backend-capacity panels plus `Retry-After`.
+7. For support, provide API/product, client, model, operation, approximate time/time zone, HTTP status, sanitized error, APIM request ID, and `x-request-id`. Never provide the key, full trace, Base64 image, embedding vector, source file, or sensitive prompt.
+8. If key exposure is suspected, rotate it rather than displaying it.
+
+## 17. Tests
+
+Tests use mocks/fakes and never call live CUHK APIs or require a real key.
+
+```bash
+python -m pytest -q
+```
+
+Optional local checks:
+
+```bash
+python -m compileall -q .
+python -c "import app"
+```
+
+The test suite covers catalogue mappings, URL/header construction, `max_completion_tokens`, response and header parsing, Model Router metadata, image decoding/error paths, embedding validation and cosine similarity, redaction, sanitized exports, user-facing errors, importability, and keyless Streamlit startup.
+
+## 18. Manual smoke-test sequence
+
+After mocked tests pass and the required APIM operations are confirmed:
+
+1. Start without a key and confirm all guidance/catalogue pages render.
+2. Configure the APIM subscription key locally; never capture it in a screenshot.
+3. Test EUS2 `gpt-5.4-mini` Chat Completions with the exact smoke prompt.
+4. Test WUS3 `gpt-5.6-sol` with the same prompt.
+5. Test EUS2 `model-router` with a 1,000-token allowance and inspect router headers.
+6. Generate one low-quality 1024×1024 PNG with EUS2 `gpt-image-2`.
+7. Generate one equivalent image with WUS3 `gpt-image-1.5`.
+8. Create one EUS2 `text-embedding-3-small` embedding and reveal only the optional sample.
+9. Compare the three default texts and verify vector count/dimension before the matrix appears.
+10. Download session statistics and verify they contain no key, prompt, Base64, vectors, or source files.
+
+Live testing requires APIM product access plus these exposed operations: regional `/chat/completions`, regional `/images/generations`, and EUS2 `/embeddings`. Responses, realtime, translation, whisper, and transcription remain catalogue-only in this UI.
+
+## 19. Change log
+
+### 2026-08 — EUS2/WUS3 Foundry modernization
+
+- migrated current demonstrations to CUHK Foundry Models EUS2/WUS3 OpenAI v1 base routes;
+- replaced duplicated legacy models/endpoints with one typed regional catalogue;
+- added capability-aware Chat, Model Router, regional Image Generation, and EUS2 Embeddings pages;
+- added safe response-header/usage separation and sanitized session statistics;
+- hardened key handling, error output, rotating metadata-only logs, Base64 validation, and vector privacy;
+- updated Starter limits, quick-start, special-access, responsible-use, and academic-honesty guidance;
+- added mocked automated tests with no live CUHK API dependency.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
