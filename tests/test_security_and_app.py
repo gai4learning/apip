@@ -214,7 +214,7 @@ def test_streamlit_config_binds_to_loopback() -> None:
     assert "enableStaticServing = false" in config
 
 
-def test_dependency_candidates_use_required_exact_versions() -> None:
+def test_dependency_locks_use_required_exact_versions_and_hashes() -> None:
     from scripts.check_dependency_lock import main
 
     main()
@@ -223,6 +223,7 @@ def test_dependency_candidates_use_required_exact_versions() -> None:
     assert "httpx==0.28.1" in runtime
     assert "python-dotenv==1.2.2" in runtime
     assert "pillow==12.3.0" in runtime
+    assert "--hash=sha256:" in runtime
     assert ">=" not in runtime and "<" not in runtime
 
 

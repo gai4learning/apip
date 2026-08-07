@@ -28,11 +28,28 @@ def _requirements(path: str) -> dict[str, str]:
     return result
 
 
+def _require_hashes(path: str, requirements: dict[str, str]) -> None:
+    hashed = {name: False for name in requirements}
+    current: str | None = None
+    for raw_line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        match = EXACT_REQUIREMENT.match(line)
+        if match is not None:
+            current = match.group(1).lower()
+        elif line.startswith("--hash=") and current in hashed:
+            hashed[current] = True
+    missing = sorted(name for name, has_hash in hashed.items() if not has_hash)
+    if missing:
+        raise SystemExit(f"{path} contains requirements without hashes: {', '.join(missing)}")
+
+
 def main() -> None:
     runtime_direct = _requirements("requirements.in")
     development_direct = _requirements("requirements-dev.in")
     runtime_lock = _requirements("requirements.lock")
     development_lock = _requirements("requirements-dev.lock")
+    _require_hashes("requirements.lock", runtime_lock)
+    _require_hashes("requirements-dev.lock", development_lock)
 
     for name, version in runtime_direct.items():
         if runtime_lock.get(name) != version:
@@ -48,7 +65,7 @@ def main() -> None:
             raise SystemExit(f"{name} does not match the required reviewed direct version")
     if len(runtime_lock) <= len(runtime_direct):
         raise SystemExit("Runtime candidate does not include transitive dependency pins")
-    print("Dependency candidate files use internally consistent exact pins.")
+    print("Dependency locks use internally consistent exact versions and artifact hashes.")
 
 
 if __name__ == "__main__":

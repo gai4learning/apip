@@ -33,7 +33,7 @@ Use only the **APIM subscription key** issued for the relevant product or projec
 - If exposure is suspected, stop using the key and request rotation. Do not display the key while diagnosing the problem.
 - Model output is rendered as plain text by default, so untrusted responses cannot create clickable Markdown links or remote Markdown resources.
 - Chat history and local usage records are bounded in memory; generated images and statistics can be cleared from the session.
-- Candidate dependency locks use exact versions in `requirements.lock` and `requirements-dev.lock`; resolver, clean-install, and vulnerability-audit verification is required before merge.
+- Resolver-generated dependency locks pin exact versions and artifact hashes in `requirements.lock` and `requirements-dev.lock`; CI regenerates, clean-installs, compatibility-checks, and vulnerability-audits them.
 
 An APIM subscription credential is not an Azure subscription and is not a Foundry backend credential.
 
@@ -68,18 +68,18 @@ pyenv local 3.11.15
 python --version
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.lock
+python -m pip install --require-hashes -r requirements.lock
 # Add the locked test tools when developing:
-python -m pip install -r requirements-dev.lock
+python -m pip install --require-hashes -r requirements-dev.lock
 ```
 
-The checked-in files contain an exact candidate dependency graph for Python 3.11 on Linux Codespaces. They were assembled when this sandbox could not access the package index, so they must not be treated as proof of transitive completeness, compatibility, artifact identity, or vulnerability remediation. `requirements.in` and `requirements-dev.in` record direct intent; `requirements.txt` remains a backward-compatible development entry point. The local checker validates only exact-pin and direct-version consistency:
+The checked-in files are resolver-generated, hash-locked dependency graphs for Python 3.11 on Linux Codespaces. `requirements.in` and `requirements-dev.in` record direct intent; `requirements.txt` remains a backward-compatible development entry point. The local checker validates exact direct versions and requires artifact hashes for every locked package:
 
 ```bash
 python scripts/check_dependency_lock.py
 ```
 
-In a connected, trusted Codespace, replace both candidate files with resolver-generated, hash-locked output before merge:
+In a connected, trusted Codespace, regenerate both hash-locked files with the pinned resolver whenever direct dependencies change:
 
 ```bash
 python -m pip install 'uv==0.12.1'
@@ -102,9 +102,9 @@ Audit the resulting runtime graph with the reviewed audit tool version:
 uvx --from pip-audit==2.10.1 pip-audit -r requirements.lock
 ```
 
-A GitHub security-verification workflow performs the same resolver generation in a networked runner, requires hashes during a clean install, runs `pip check` and the pinned audit, and uploads the generated lock artifacts. Replace the candidate locks with those artifacts only after the workflow succeeds; local Codespace commands remain the source of truth for reproducing the process.
+The GitHub security-verification workflow independently regenerates both lock files and compares them byte-for-byte with the committed versions. It then enforces hashes during a clean installation, runs `pip check`, executes the pinned audit, and runs lint, compilation, and the full mocked test suite.
 
-Do not treat the checked-in candidate pins or the local consistency check as evidence that dependencies are complete, compatible, or vulnerability-free. A merge gate must include successful resolver generation, a clean installation, `python -m pip check`, and the audit above.
+Exact pins and hashes do not by themselves prove that dependencies remain vulnerability-free. Keep successful resolver comparison, clean installation, `python -m pip check`, and audit results as merge gates.
 
 ## 5. Run the Streamlit app
 

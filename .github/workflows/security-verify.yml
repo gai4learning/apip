@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write # Required only for the reviewed workflow_dispatch lock-refresh step.
+  contents: read
 
 jobs:
   verify:
@@ -34,7 +34,6 @@ jobs:
             --generate-hashes \
             -o generated-locks/requirements-dev.lock
       - name: Verify committed hash locks match fresh resolution
-        if: github.event_name != 'workflow_dispatch'
         run: |
           cmp requirements.lock generated-locks/requirements.lock
           cmp requirements-dev.lock generated-locks/requirements-dev.lock
@@ -52,16 +51,6 @@ jobs:
           uvx --from ruff==0.16.1 ruff check .
           python -m py_compile app.py get_started.py clients/*.py config/*.py services/*.py utils/*.py scripts/*.py tests/*.py
           python -m pytest -q
-      - name: Commit verified hash locks for an explicit refresh
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git add requirements.lock requirements-dev.lock
-          if ! git diff --cached --quiet; then
-            git -c user.name="github-actions[bot]" \
-              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "build: refresh verified dependency locks"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
       - name: Upload generated hash locks
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
