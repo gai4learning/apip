@@ -60,18 +60,31 @@ The key may instead be entered as a temporary password-masked UI override. Only 
 
 ## 4. Installation
 
-Python **3.11.x** is required. The repository includes `.python-version` for the Codespace `pyenv` runtime. Verify the selected interpreter before installing:
+Python **3.11.15** is required. Codespaces may start with a different Python version and may not include `pyenv`. Check the default interpreter first:
 
 ```bash
-pyenv install -s 3.11.15
-pyenv local 3.11.15
-python --version
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --require-hashes -r requirements.lock
-# Add the locked test tools when developing:
-python -m pip install --require-hashes -r requirements-dev.lock
+python3 --version
 ```
+
+If it is not Python 3.11.15, install the pinned `uv` tool with the available interpreter and use it to provision the required version:
+
+```bash
+python3 -m pip install --user "uv==0.12.1"
+export PATH="$HOME/.local/bin:$PATH"
+uv python install 3.11.15
+uv venv --python 3.11.15 .venv
+source .venv/bin/activate
+python --version  # Must report Python 3.11.15
+uv pip install --require-hashes -r requirements.lock
+```
+
+To include the locked development and test tools, install the development graph instead of the runtime graph:
+
+```bash
+uv pip install --require-hashes -r requirements-dev.lock
+```
+
+The repository's `.python-version` records the required version for compatible version managers, but it does not install Python or guarantee that `pyenv` is available.
 
 The checked-in files are resolver-generated, hash-locked dependency graphs for Python 3.11 on Linux Codespaces. `requirements.in` and `requirements-dev.in` record direct intent; `requirements.txt` remains a backward-compatible development entry point. The local checker validates exact direct versions and requires artifact hashes for every locked package:
 
