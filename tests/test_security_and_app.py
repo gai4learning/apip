@@ -130,7 +130,8 @@ def test_streamlit_app_starts_without_live_key(monkeypatch) -> None:
     from streamlit.testing.v1 import AppTest
 
     monkeypatch.delenv("CUHK_APIM_API_KEY", raising=False)
-    app = AppTest.from_file("app.py", default_timeout=15).run()
+    app_path = Path(__file__).parents[1] / "app.py"
+    app = AppTest.from_file(str(app_path), default_timeout=15).run()
     assert not app.exception
     assert any("LOCAL-ONLY" in element.value for element in app.error)
     assert any("Get Started" in element.value for element in app.title)
