@@ -1,0 +1,56 @@
+name: Security verification
+
+on:
+  workflow_dispatch:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11.15"
+          cache: pip
+      - name: Install pinned dependency compiler
+        run: python -m pip install "uv==0.12.1"
+      - name: Generate hash-locked dependency graphs
+        run: |
+          mkdir -p generated-locks
+          uv pip compile requirements.in \
+            --python-version 3.11.15 \
+            --python-platform x86_64-unknown-linux-gnu \
+            --generate-hashes \
+            -o generated-locks/requirements.lock
+          uv pip compile requirements-dev.in \
+            --python-version 3.11.15 \
+            --python-platform x86_64-unknown-linux-gnu \
+            --generate-hashes \
+            -o generated-locks/requirements-dev.lock
+      - name: Validate and clean-install generated graph
+        run: |
+          cp generated-locks/requirements.lock requirements.lock
+          cp generated-locks/requirements-dev.lock requirements-dev.lock
+          python scripts/check_dependency_lock.py
+          uv pip install --system --require-hashes -r requirements-dev.lock
+          python -m pip check
+      - name: Audit runtime dependencies
+        run: uvx --from pip-audit==2.10.1 pip-audit -r requirements.lock
+      - name: Run source and test verification
+        run: |
+          uvx --from ruff==0.16.1 ruff check .
+          python -m py_compile app.py get_started.py clients/*.py config/*.py services/*.py utils/*.py scripts/*.py tests/*.py
+          python -m pytest -q
+      - name: Upload generated hash locks
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-3.11-linux-hash-locks
+          path: generated-locks/
+          if-no-files-found: error
+          retention-days: 7

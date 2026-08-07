@@ -16,6 +16,7 @@ from utils.errors import ResponseFormatError
 from utils.usage import HeaderSummary, normalize_usage
 
 MAX_DECODED_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_PROMPT_CHARS = 4_000
 SUPPORTED_IMAGE_FORMATS = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
 
 
@@ -59,6 +60,8 @@ class ImageService:
         model = require_model_operation(region, model_id, Operation.IMAGE_GENERATION)
         if not prompt.strip():
             raise ValueError("Enter an image prompt before submitting.")
+        if len(prompt) > MAX_IMAGE_PROMPT_CHARS:
+            raise ValueError(f"Image prompt is limited to {MAX_IMAGE_PROMPT_CHARS:,} characters.")
         if starter_mode and n != 1:
             raise ValueError("Starter mode constrains image count to n = 1.")
         if not 1 <= n <= 4:
@@ -89,6 +92,13 @@ class ImageService:
                 "The image response did not contain image data. Record the sanitized request ID for support.",
                 response.headers,
             )
+        if len(data) != n:
+            raise ResponseFormatError(
+                response.status_code,
+                "image_count_mismatch",
+                "The number of returned images did not match the requested count.",
+                response.headers,
+            )
         images: list[GeneratedImage] = []
         for item in data:
             if not isinstance(item, Mapping) or not isinstance(item.get("b64_json"), str):
@@ -100,13 +110,6 @@ class ImageService:
                 )
             images.append(
                 _decode_image(item["b64_json"], response, output_format, size)
-            )
-        if len(images) != n:
-            raise ResponseFormatError(
-                response.status_code,
-                "image_count_mismatch",
-                "The number of returned images did not match the requested count.",
-                response.headers,
             )
         return ImageResult(
             status_code=response.status_code,
@@ -148,6 +151,14 @@ def _decode_image(
             "The decoded image was empty or exceeded the safe local size limit.",
             response.headers,
         )
+    detected_format = _container_format(content)
+    if detected_format != expected_format:
+        raise ResponseFormatError(
+            response.status_code,
+            "unexpected_image_container",
+            "The decoded image container did not match the requested output format.",
+            response.headers,
+        )
     try:
         from PIL import Image
 
@@ -174,3 +185,15 @@ def _decode_image(
             response.headers,
         ) from None
     return GeneratedImage(content, SUPPORTED_IMAGE_FORMATS[image_format], image_format)
+
+
+
+def _container_format(content: bytes) -> str | None:
+    """Identify only the three explicitly supported image containers before Pillow dispatch."""
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if content.startswith(b"\xff\xd8\xff") and content.endswith(b"\xff\xd9"):
+        return "jpeg"
+    if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "webp"
+    return None

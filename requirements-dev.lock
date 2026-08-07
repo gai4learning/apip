@@ -1,0 +1,8 @@
+# Exact development candidate graph layered over requirements.lock.
+# Replace with resolver-generated, hash-locked output and audit it before merge.
+-r requirements.lock
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.19.2
+pytest==9.1.1

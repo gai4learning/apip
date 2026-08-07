@@ -115,3 +115,53 @@ def test_non_finite_embedding_values_are_rejected(client_factory, non_finite: fl
         EmbeddingService(client).embed(
             model_id="text-embedding-3-small", texts=["one"]
         )
+
+
+
+def test_embedding_dimension_limit_is_enforced_before_copying(client_factory) -> None:
+    oversized = [0.0] * 4_097
+    client, _ = client_factory(FakeResponse(200, embedding_body([oversized])))
+    with pytest.raises(ResponseFormatError, match="dimension limit"):
+        EmbeddingService(client).embed(
+            model_id="text-embedding-3-small", texts=["one"]
+        )
+
+
+
+def test_huge_integer_embedding_value_is_rejected(client_factory) -> None:
+    client, _ = client_factory(FakeResponse(200, embedding_body([[1.0, 10**1000]])))
+    with pytest.raises(ResponseFormatError, match="out-of-range"):
+        EmbeddingService(client).embed(
+            model_id="text-embedding-3-small", texts=["one"]
+        )
+
+
+def test_extreme_finite_vectors_produce_finite_similarity() -> None:
+    similarity = cosine_similarity([1e308, 1e308], [1e308, -1e308])
+    assert math.isfinite(similarity)
+    assert similarity == pytest.approx(0.0)
+
+
+def test_embedding_metadata_is_bounded(client_factory) -> None:
+    body = embedding_body([[1.0, 0.0]])
+    body["model"] = "m" * 1_000
+    body["object"] = "o" * 1_000
+    client, _ = client_factory(FakeResponse(200, body))
+    result = EmbeddingService(client).embed(
+        model_id="text-embedding-3-small", texts=["one"]
+    )
+    assert len(result.response_model or "") == 256
+    assert len(result.object_type or "") == 256
+
+
+def test_aggregate_embedding_scalar_limit_is_enforced(client_factory, monkeypatch) -> None:
+    import services.embedding_service as embedding_module
+
+    monkeypatch.setattr(embedding_module, "MAX_TOTAL_VECTOR_SCALARS", 3)
+    client, _ = client_factory(
+        FakeResponse(200, embedding_body([[1.0, 0.0], [0.0, 1.0]]))
+    )
+    with pytest.raises(ResponseFormatError, match="scalar limit"):
+        EmbeddingService(client).embed(
+            model_id="text-embedding-3-small", texts=["one", "two"]
+        )

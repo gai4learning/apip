@@ -62,10 +62,7 @@ def load_settings() -> Settings:
         raise ValueError("CUHK_DEFAULT_REGION must be EUS2 or WUS3.") from error
 
     settings = Settings(
-        # AZURE_API_KEY is accepted only as a migration alias for existing Kiro Web secrets.
-        api_key=(
-            os.getenv("CUHK_APIM_API_KEY") or os.getenv("AZURE_API_KEY", "")
-        ).strip(),
+        api_key=os.getenv("CUHK_APIM_API_KEY", "").strip(),
         eus2_base_url=_base_url(
             "CUHK_EUS2_BASE_URL", DEFAULT_BASE_URLS[Region.EUS2], Region.EUS2
         ),

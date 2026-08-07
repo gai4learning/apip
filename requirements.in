@@ -1,0 +1,5 @@
+# Direct runtime dependencies. Regenerate requirements.lock with uv 0.12.1.
+streamlit==1.61.1
+httpx==0.28.1
+python-dotenv==1.2.2
+Pillow==12.3.0

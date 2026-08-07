@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 from conftest import FakeResponse
 
@@ -173,4 +176,146 @@ def test_declared_oversize_response_is_rejected_before_parsing(client_factory) -
         FakeResponse(200, chat_body(), {"content-length": "99999999"})
     )
     with pytest.raises(ResponseFormatError, match="safe local response-size limit"):
+        client.post("chat/completions", {})
+
+
+
+def test_client_rejects_non_cuhk_destination() -> None:
+    with pytest.raises(ValueError, match="exact documented CUHK"):
+        CUHKAPIMClient("https://attacker.example/openai/v1", "test-key")
+
+
+def test_client_rejects_unknown_operation(client_factory) -> None:
+    client, transport = client_factory(FakeResponse())
+    with pytest.raises(ValueError, match="does not allow"):
+        client.post("audio/transcriptions", {})
+    assert transport.calls == []
+
+
+def test_operation_specific_request_size_limit(client_factory) -> None:
+    client, transport = client_factory(FakeResponse())
+    with pytest.raises(ResponseFormatError, match="request exceeded") as caught:
+        client.post("chat/completions", {"input": "x" * 70_000})
+    assert caught.value.code == "request_too_large"
+    assert transport.calls == []
+
+
+def test_chat_response_uses_smaller_operation_limit(client_factory) -> None:
+    client, _ = client_factory(
+        FakeResponse(200, chat_body(), {"content-length": str(3 * 1024 * 1024)})
+    )
+    with pytest.raises(ResponseFormatError, match="response exceeded"):
+        client.post("chat/completions", {})
+
+
+@pytest.mark.parametrize(
+    ("system_instruction", "user_prompt", "expected"),
+    [
+        ("s" * 4_001, "test", "System instruction is limited"),
+        ("", "u" * 12_001, "User prompt is limited"),
+    ],
+)
+def test_chat_service_enforces_input_limits(
+    client_factory, system_instruction: str, user_prompt: str, expected: str
+) -> None:
+    client, transport = client_factory(FakeResponse(200, chat_body()))
+    with pytest.raises(ValueError, match=expected):
+        ChatService(client).complete(
+            region=Region.EUS2,
+            model_id="gpt-5.4-mini",
+            system_instruction=system_instruction,
+            user_prompt=user_prompt,
+            max_completion_tokens=100,
+        )
+    assert transport.calls == []
+
+
+def test_chat_service_rejects_excessive_visible_output(client_factory) -> None:
+    client, _ = client_factory(FakeResponse(200, chat_body("x" * 64_001)))
+    with pytest.raises(ResponseFormatError, match="chat response exceeded"):
+        ChatService(client).complete(
+            region=Region.EUS2,
+            model_id="gpt-5.4-mini",
+            system_instruction="",
+            user_prompt="test",
+            max_completion_tokens=100,
+        )
+
+
+
+def test_production_transport_disables_redirect_following(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class StreamingResponse:
+        status_code = 302
+
+        def __init__(self) -> None:
+            self.headers = {"location": "https://attacker.example/collect"}
+
+        def iter_bytes(self):
+            yield b'{"error":{"code":"redirect"}}'
+
+    class StreamContext:
+        def __enter__(self):
+            return StreamingResponse()
+
+        def __exit__(self, *args):
+            return False
+
+    class ProductionClientFake:
+        def __init__(self, *, follow_redirects: bool) -> None:
+            captured["follow_redirects"] = follow_redirects
+
+        def stream(self, method: str, url: str, **kwargs):
+            captured["url"] = url
+            return StreamContext()
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(Client=ProductionClientFake))
+    client = CUHKAPIMClient(
+        "https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1",
+        "local-test-subscription-key",
+    )
+    with pytest.raises(APIMError) as caught:
+        client.post("chat/completions", {})
+    assert caught.value.status_code == 302
+    assert captured == {
+        "follow_redirects": False,
+        "url": "https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1/chat/completions",
+    }
+
+
+def test_production_stream_limit_rejects_chunked_body_without_content_length(
+    monkeypatch,
+) -> None:
+    class StreamingResponse:
+        status_code = 200
+
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {}
+
+        def iter_bytes(self):
+            yield b"123456"
+            yield b"789012"
+
+    class StreamContext:
+        def __enter__(self):
+            return StreamingResponse()
+
+        def __exit__(self, *args):
+            return False
+
+    class ProductionClientFake:
+        def __init__(self, *, follow_redirects: bool) -> None:
+            assert follow_redirects is False
+
+        def stream(self, method: str, url: str, **kwargs):
+            return StreamContext()
+
+    monkeypatch.setitem(sys.modules, "httpx", SimpleNamespace(Client=ProductionClientFake))
+    client = CUHKAPIMClient(
+        "https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1",
+        "local-test-subscription-key",
+        max_response_bytes=10,
+    )
+    with pytest.raises(ResponseFormatError, match="response exceeded"):
         client.post("chat/completions", {})

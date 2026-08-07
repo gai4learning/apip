@@ -8,11 +8,19 @@ from pathlib import Path
 
 import pytest
 
+from app import require_loopback_server
 from clients.cuhk_apim_client import CUHKAPIMClient
 from config.settings import load_settings
 from utils.errors import APIMError, sanitized_unexpected_error
 from utils.security import mask_api_key, redact_text, sanitize_mapping
-from utils.usage import safe_session_export, summarize_headers
+from utils.session import (
+    MAX_CHAT_HISTORY_CHARACTERS,
+    MAX_CHAT_HISTORY_MESSAGES,
+    MAX_SESSION_RECORDS,
+    append_bounded_record,
+    bounded_chat_history,
+)
+from utils.usage import MAX_METADATA_VALUE_CHARS, safe_session_export, summarize_headers
 
 
 def test_api_key_and_authorization_redaction() -> None:
@@ -55,10 +63,10 @@ def test_environment_loads_without_key(monkeypatch) -> None:
         CUHKAPIMClient(settings.eus2_base_url, settings.api_key)
 
 
-def test_azure_api_key_migration_alias(monkeypatch) -> None:
+def test_generic_azure_api_key_is_not_used(monkeypatch) -> None:
     monkeypatch.delenv("CUHK_APIM_API_KEY", raising=False)
-    monkeypatch.setenv("AZURE_API_KEY", "kiro-web-secret-value")
-    assert load_settings().api_key == "kiro-web-secret-value"
+    monkeypatch.setenv("AZURE_API_KEY", "unrelated-azure-secret")
+    assert load_settings().api_key == ""
 
 
 def test_no_secret_in_transport_error_output(client_factory) -> None:
@@ -67,7 +75,11 @@ def test_no_secret_in_transport_error_output(client_factory) -> None:
             raise RuntimeError(f"failed with api-key: {kwargs['headers']['api-key']}")
 
     key = "do-not-leak-this-key"
-    client = CUHKAPIMClient("https://example.test/openai/v1", key, http_client=FailingTransport())
+    client = CUHKAPIMClient(
+        "https://cuhk-apip.azure-api.net/foundry-eus2/openai/v1",
+        key,
+        http_client=FailingTransport(),
+    )
     with pytest.raises(APIMError) as caught:
         client.post("chat/completions", {})
     assert key not in str(caught.value)
@@ -102,7 +114,7 @@ def test_env_example_contains_no_key_and_current_defaults() -> None:
 
 
 def test_python_runtime_is_supported() -> None:
-    assert sys.version_info >= (3, 11)
+    assert (3, 11) <= sys.version_info[:2] < (3, 12)
 
 
 def test_application_imports_successfully() -> None:
@@ -148,3 +160,84 @@ def test_environment_rejects_wrong_regional_path(monkeypatch) -> None:
     )
     with pytest.raises(ValueError, match="documented EUS2"):
         load_settings()
+
+
+
+def test_metadata_values_and_backend_header_count_are_bounded() -> None:
+    headers = {f"x-ratelimit-test-{index}": "x" * 1_000 for index in range(30)}
+    headers["x-request-id"] = "safe\nvalue" + ("z" * 1_000)
+    summary = summarize_headers(headers)
+    assert len(summary.backend_capacity) == 16
+    assert len(summary.request_id or "") == MAX_METADATA_VALUE_CHARS
+    assert "\n" not in (summary.request_id or "")
+
+
+def test_session_records_and_exports_are_bounded() -> None:
+    records: list[dict[str, object]] = []
+    for index in range(MAX_SESSION_RECORDS + 20):
+        append_bounded_record(records, {"status_code": index, "served_model": "x" * 1_000})
+    assert len(records) == MAX_SESSION_RECORDS
+    assert len(records[0]["served_model"]) == MAX_METADATA_VALUE_CHARS
+    assert set(records[0]) == {"status_code", "served_model"}
+    export = safe_session_export(records)
+    assert len(export["records"]) == MAX_SESSION_RECORDS
+    assert len(export["records"][0]["served_model"]) == MAX_METADATA_VALUE_CHARS
+
+
+def test_chat_history_is_bounded_by_count_and_characters() -> None:
+    history = [
+        {"role": "user", "content": str(index) * 2_000}
+        for index in range(MAX_CHAT_HISTORY_MESSAGES + 5)
+    ]
+    bounded = bounded_chat_history(history)
+    assert len(bounded) <= MAX_CHAT_HISTORY_MESSAGES
+    assert sum(len(message["content"]) for message in bounded) <= MAX_CHAT_HISTORY_CHARACTERS
+    assert bounded[-1]["content"].startswith(str(MAX_CHAT_HISTORY_MESSAGES + 4))
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "::1", "localhost"])
+def test_loopback_server_addresses_are_allowed(address: str) -> None:
+    require_loopback_server(address)
+
+
+@pytest.mark.parametrize("address", [None, "0.0.0.0", "10.0.0.2", "example.test"])
+def test_non_loopback_server_addresses_are_rejected(address: str | None) -> None:
+    with pytest.raises(ValueError, match="loopback"):
+        require_loopback_server(address)
+
+
+def test_streamlit_config_binds_to_loopback() -> None:
+    config = Path(".streamlit/config.toml").read_text(encoding="utf-8")
+    assert 'address = "127.0.0.1"' in config
+    assert "enableXsrfProtection = true" in config
+    assert "enableStaticServing = false" in config
+
+
+def test_dependency_candidates_use_required_exact_versions() -> None:
+    from scripts.check_dependency_lock import main
+
+    main()
+    runtime = Path("requirements.lock").read_text(encoding="utf-8").lower()
+    assert "streamlit==1.61.1" in runtime
+    assert "httpx==0.28.1" in runtime
+    assert "python-dotenv==1.2.2" in runtime
+    assert "pillow==12.3.0" in runtime
+    assert ">=" not in runtime and "<" not in runtime
+
+
+def test_model_output_is_rendered_through_plain_text_boundary(monkeypatch) -> None:
+    import app
+
+    rendered: list[str] = []
+
+    class TextOnlyRenderer:
+        def text(self, value: str) -> None:
+            rendered.append(value)
+
+        def write(self, value: str) -> None:
+            raise AssertionError(f"Markdown-capable write used for untrusted text: {value}")
+
+    payload = "[deceptive link](https://attacker.example) ![](https://attacker.example/pixel)"
+    monkeypatch.setattr(app, "st", TextOnlyRenderer(), raising=False)
+    app._render_untrusted_text(payload)
+    assert rendered == [payload]
