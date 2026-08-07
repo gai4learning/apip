@@ -1,5 +1,12 @@
-# Environment variables
+# Environment variables and local secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+.streamlit/secrets.toml
+secrets.toml
 
 # Python
 __pycache__/
@@ -8,6 +15,7 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 ENV/
 
 # IDE
